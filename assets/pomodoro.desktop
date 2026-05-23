@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Pomodoro
+Comment=Local focus timer with history
+Exec=pomodoro
+Icon=pomodoro
+Terminal=false
+Categories=Utility;Office;
+StartupWMClass=pomodoro

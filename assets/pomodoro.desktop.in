@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Pomodoro
+GenericName=Pomodoro Timer
+Comment=Local-only Pomodoro timer with persistent history
+Exec=@BIN@
+Icon=pomodoro
+Terminal=false
+Categories=Utility;Office;ProjectManagement;
+Keywords=pomodoro;timer;focus;productivity;
+StartupNotify=true
+StartupWMClass=pomodoro
