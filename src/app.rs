@@ -24,6 +24,13 @@ pub struct PomodoroApp {
     pub(crate) tiny_mode: bool,
     pub(crate) pending_resize: Option<[f32; 2]>,
     pub(crate) always_on_top: bool,
+    first_frame: bool,
+    /// Shared state for the background status bar ticker:
+    /// (seconds_left, running, mode_emoji, captured_at)
+    /// The thread re-computes the current value using elapsed time so it
+    /// stays accurate even when the window is minimised.
+    #[cfg(target_os = "macos")]
+    status_bar_state: std::sync::Arc<std::sync::Mutex<(u32, bool, &'static str, std::time::Instant)>>,
 }
 
 impl PomodoroApp {
@@ -43,6 +50,11 @@ impl PomodoroApp {
             tiny_mode: false,
             pending_resize: None,
             always_on_top: false,
+            first_frame: true,
+            #[cfg(target_os = "macos")]
+            status_bar_state: std::sync::Arc::new(std::sync::Mutex::new(
+                (0u32, false, "🍅", std::time::Instant::now())
+            )),
         }
     }
 }
@@ -74,6 +86,59 @@ impl eframe::App for PomodoroApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+
+        // First-frame macOS setup.
+        if self.first_frame {
+            self.first_frame = false;
+            #[cfg(target_os = "macos")]
+            crate::platform::apply_macos_transparency();
+            #[cfg(target_os = "macos")]
+            crate::platform::setup_macos_status_bar();
+            // Background thread: keeps the status bar current while minimized.
+            // It re-computes the remaining minutes from the captured state +
+            // elapsed time, so the display stays accurate without calling tick().
+            #[cfg(target_os = "macos")]
+            {
+                let shared = std::sync::Arc::clone(&self.status_bar_state);
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    if let Ok(s) = shared.lock() {
+                        let (secs, running, emoji, captured_at) = &*s;
+                        let current = if *running {
+                            secs.saturating_sub(captured_at.elapsed().as_secs() as u32)
+                        } else {
+                            *secs
+                        };
+                        let mins = current / 60;
+                        let indicator = if *running { " ▶" } else { "" };
+                        crate::platform::update_macos_status_bar(
+                            &format!("{} {} min{}", emoji, mins, indicator)
+                        );
+                    }
+                });
+            }
+        }
+
+        // Update macOS menu bar each frame and refresh the shared state so
+        // the background thread can extrapolate accurately while minimised.
+        #[cfg(target_os = "macos")]
+        {
+            let emoji: &'static str = match self.mode {
+                crate::model::Mode::Focus      => "🍅",
+                crate::model::Mode::ShortBreak => "☕",
+                crate::model::Mode::LongBreak  => "🌙",
+            };
+            let mins = self.seconds_left / 60;
+            let indicator = if self.running { " ▶" } else { "" };
+            crate::platform::update_macos_status_bar(
+                &format!("{} {} min{}", emoji, mins, indicator)
+            );
+            // Snapshot current state + timestamp for the background thread.
+            if let Ok(mut s) = self.status_bar_state.lock() {
+                *s = (self.seconds_left, self.running, emoji, std::time::Instant::now());
+            }
+        }
+
         self.tick();
 
         // Keep repainting while the timer is counting down.

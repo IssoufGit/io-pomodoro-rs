@@ -78,3 +78,95 @@ mod linux {
             .spawn();
     }
 }
+
+// ── macOS: window management & status bar ─────────────────────────────────────
+
+/// Force the NSWindow and its Metal layer to composite with alpha.
+/// eframe's with_transparent(true) sometimes doesn't propagate to the
+/// CAMetalLayer on macOS — calling this on the first frame fixes it.
+#[cfg(target_os = "macos")]
+pub fn apply_macos_transparency() {
+    use objc::{class, msg_send, runtime::NO, sel, sel_impl, runtime::Object};
+    unsafe {
+        let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+        let window: *mut Object = msg_send![app, mainWindow];
+        if window.is_null() { return; }
+        let _: () = msg_send![window, setOpaque: NO];
+        let clear: *mut Object = msg_send![class!(NSColor), clearColor];
+        let _: () = msg_send![window, setBackgroundColor: clear];
+        let _: () = msg_send![window, invalidateShadow];
+        let view: *mut Object = msg_send![window, contentView];
+        if !view.is_null() {
+            let layer: *mut Object = msg_send![view, layer];
+            if !layer.is_null() {
+                let _: () = msg_send![layer, setOpaque: NO];
+            }
+        }
+    }
+}
+
+/// Minimize the main window.
+/// Deferred via performSelector:withObject:afterDelay: so it runs after the
+/// current Metal frame is fully presented — direct miniaturize: inside a frame
+/// hangs the app on macOS.
+pub fn minimize_window(ctx: &eframe::egui::Context) {
+    #[cfg(target_os = "macos")]
+    {
+        use objc::{class, msg_send, sel, sel_impl, runtime::Object};
+        unsafe {
+            let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+            let win: *mut Object = msg_send![app, mainWindow];
+            if !win.is_null() {
+                let nil: *mut Object = std::ptr::null_mut();
+                let _: () = msg_send![
+                    win,
+                    performSelector: sel!(miniaturize:)
+                    withObject: nil
+                    afterDelay: 0.0f64
+                ];
+            }
+        }
+        let _ = ctx;
+    }
+    #[cfg(not(target_os = "macos"))]
+    ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Minimized(true));
+}
+
+/// Pointer to the NSStatusItem. Accessed only on the main thread.
+#[cfg(target_os = "macos")]
+static mut MACOS_STATUS_ITEM: *mut objc::runtime::Object = std::ptr::null_mut();
+
+/// Creates a persistent item in the macOS menu bar. Call once on first frame.
+#[cfg(target_os = "macos")]
+pub fn setup_macos_status_bar() {
+    use objc::{class, msg_send, sel, sel_impl, runtime::Object};
+    use std::ffi::CString;
+    unsafe {
+        let bar: *mut Object = msg_send![class!(NSStatusBar), systemStatusBar];
+        let item: *mut Object = msg_send![bar, statusItemWithLength: -1.0f64];
+        let item: *mut Object = msg_send![item, retain];
+        MACOS_STATUS_ITEM = item;
+        let btn: *mut Object = msg_send![item, button];
+        if !btn.is_null() {
+            let s = CString::new("🍅").unwrap();
+            let ns: *mut Object = msg_send![class!(NSString), stringWithUTF8String: s.as_ptr()];
+            let _: () = msg_send![btn, setTitle: ns];
+        }
+    }
+}
+
+/// Updates the menu bar item text. Safe to call from any thread.
+#[cfg(target_os = "macos")]
+pub fn update_macos_status_bar(text: &str) {
+    use objc::{class, msg_send, sel, sel_impl, runtime::Object};
+    use std::ffi::CString;
+    unsafe {
+        if MACOS_STATUS_ITEM.is_null() { return; }
+        let btn: *mut Object = msg_send![MACOS_STATUS_ITEM, button];
+        if btn.is_null() { return; }
+        if let Ok(s) = CString::new(text) {
+            let ns: *mut Object = msg_send![class!(NSString), stringWithUTF8String: s.as_ptr()];
+            let _: () = msg_send![btn, setTitle: ns];
+        }
+    }
+}
