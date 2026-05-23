@@ -143,10 +143,11 @@ impl PomodoroApp {
                 // ── Timer display ─────────────────────────────────────────────
                 let mins = self.seconds_left / 60;
                 let color = if self.running {
-                    egui::Color32::WHITE
+                    egui::Color32::GRAY
                 } else {
                     ui.visuals().strong_text_color()
                 };
+
                 ui.vertical_centered(|ui| {
                     let mut job = egui::text::LayoutJob::default();
                     job.append(
@@ -377,7 +378,7 @@ impl PomodoroApp {
                                     egui::Sense::hover(),
                                 );
                                 let (bg, text_color) = if s.mode == Mode::Focus {
-                                    (egui::Color32::from_rgb(46, 139, 87), egui::Color32::WHITE)
+                                    (egui::Color32::from_rgb(46, 139, 87), egui::Color32::GRAY)
                                 } else {
                                     (badge_color.linear_multiply(0.18), badge_color)
                                 };

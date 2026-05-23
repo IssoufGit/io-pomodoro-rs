@@ -87,7 +87,7 @@ impl PomodoroApp {
             // ── Timer display (same on all platforms) ─────────────────────────
             let mins = self.seconds_left / 60;
             let color = if self.running {
-                egui::Color32::WHITE
+                egui::Color32::GRAY
             } else {
                 ui.visuals().strong_text_color()
             };
