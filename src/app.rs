@@ -72,7 +72,8 @@ impl eframe::App for PomodoroApp {
         [0.0, 0.0, 0.0, 0.0]
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         self.tick();
 
         // Keep repainting while the timer is counting down.
@@ -103,13 +104,13 @@ impl eframe::App for PomodoroApp {
         if t_key  { self.toggle_tiny(); }
         if a_key && crate::platform::always_on_top_supported() {
             self.always_on_top = !self.always_on_top;
-            Self::apply_always_on_top(ctx, self.always_on_top);
+            Self::apply_always_on_top(&ctx, self.always_on_top);
         }
 
         if self.tiny_mode {
-            self.render_tiny(ctx);
+            self.render_tiny(&ctx);
         } else {
-            self.render_full(ctx);
+            self.render_full(&ctx);
         }
     }
 }

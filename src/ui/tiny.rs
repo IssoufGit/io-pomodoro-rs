@@ -108,7 +108,7 @@ impl PomodoroApp {
                     egui::text::TextFormat {
                         font_id: egui::FontId::proportional(16.0),
                         color,
-                        valign: egui::Align::BOTTOM,
+                        valign: egui::Align::Center,
                         ..Default::default()
                     },
                 );
@@ -124,7 +124,7 @@ impl PomodoroApp {
             ui.add(
                 egui::ProgressBar::new(progress)
                     .desired_width(ui.available_width())
-                    .fill(egui::Color32::WHITE),
+                    .fill(egui::Color32::GRAY),
             );
             ui.add_space(4.0);
 

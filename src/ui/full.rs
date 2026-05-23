@@ -188,7 +188,7 @@ impl PomodoroApp {
                     ui.add(
                         egui::ProgressBar::new(progress)
                             .desired_width(220.0)
-                            .fill(egui::Color32::WHITE),
+                            .fill(egui::Color32::GRAY),
                     );
                 });
                 ui.add_space(12.0);
