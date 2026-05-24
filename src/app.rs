@@ -27,17 +27,13 @@ pub struct PomodoroApp {
     first_frame: bool,
     /// Shared state for the background status bar ticker:
     /// (seconds_left, running, mode_emoji, captured_at)
-    /// The thread re-computes the current value using elapsed time so it
-    /// stays accurate even when the window is minimised.
     #[cfg(target_os = "macos")]
     status_bar_state: std::sync::Arc<std::sync::Mutex<(u32, bool, &'static str, std::time::Instant)>>,
     /// True while the window was miniaturized on the previous ui() frame.
-    /// Used to detect the restore transition on the main thread (fast path).
     #[cfg(target_os = "macos")]
     was_minimized: bool,
-    /// Set by either the main thread or the background thread when a
-    /// minimize→restore transition is detected.  Cleared by raw_input_hook()
-    /// which injects PointerGone before the next begin_frame().
+    /// Set when a restore transition is detected; cleared by raw_input_hook()
+    /// which injects PointerGone before begin_frame().
     #[cfg(target_os = "macos")]
     needs_pointer_reset: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
@@ -75,8 +71,6 @@ impl PomodoroApp {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 impl PomodoroApp {
-    /// Apply always-on-top via wmctrl (X11) and egui's ViewportCommand.
-    /// Both are tried; whichever the compositor honours wins.
     pub fn apply_always_on_top(ctx: &egui::Context, enable: bool) {
         crate::platform::set_always_on_top("Pomodoro", enable);
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
@@ -92,14 +86,11 @@ impl PomodoroApp {
 // ── eframe::App ───────────────────────────────────────────────────────────────
 
 impl eframe::App for PomodoroApp {
-    /// Fully transparent GPU clear so the OS compositor can show through.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0, 0.0, 0.0, 0.0]
     }
 
-    /// Runs before begin_frame(), so PointerGone here IS processed by egui's
-    /// input machinery.  Adding events via input_mut() inside ui() is too late
-    /// — begin_frame() has already derived pointer state from the raw events.
+    /// Runs before begin_frame() so PointerGone is actually processed by egui.
     #[cfg(target_os = "macos")]
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         if self.needs_pointer_reset.swap(false, std::sync::atomic::Ordering::Relaxed) {
@@ -110,33 +101,30 @@ impl eframe::App for PomodoroApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
-        // macOS: main-thread fast-path for minimize→restore detection.
+        // macOS: detect minimize→restore every frame.
         //
-        // When the NSStatusItem is present, [NSApplication windows] contains
-        // an NSStatusBarWindow (level 25).  AppKit then sees hasVisibleWindows=YES
-        // and skips the makeKeyAndOrderFront: it would otherwise call when the
-        // Dock icon is clicked.  The window appears but is not the key window,
-        // so Cocoa doesn't route mouse events to it — buttons freeze.
+        // Root cause: NSStatusItem creates a backing NSStatusBarWindow that
+        // appears in [NSApplication windows].  AppKit then reports
+        // hasVisibleWindows=YES and skips the automatic makeKeyAndOrderFront:
+        // on Dock-icon clicks.  The window appears but is not the key window,
+        // so Cocoa stops routing mouse events to it — buttons freeze.
         //
-        // We poll isMiniaturized every frame.  On the true→false transition we
-        // schedule makeKeyAndOrderFront: (deferred to the next run-loop turn via
-        // performSelectorOnMainThread:waitUntilDone:NO) and request a PointerGone
-        // injection before the next begin_frame().
-        //
-        // Note: ui() may stop receiving frames while the window is still
-        // animating into the Dock (before isMiniaturized flips).  The background
-        // thread below is the reliable path for that case.
+        // Fix: send ViewportCommand::Focus on each restore transition.
+        // eframe routes this through winit's focus_window() which calls
+        // activateIgnoringOtherApps + makeKeyAndOrderFront on the main thread.
+        // Dual detection: main-thread (immediate, same frame as restore) and
+        // background thread (catches the race where frames stop before
+        // isMiniaturized flips to true).
         #[cfg(target_os = "macos")]
         {
             let is_mini = crate::platform::window_is_minimized();
             if self.was_minimized && !is_mini {
-                crate::platform::make_window_key_on_main_thread();
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 self.needs_pointer_reset.store(true, std::sync::atomic::Ordering::Relaxed);
             }
             self.was_minimized = is_mini;
         }
 
-        // First-frame macOS setup.
         if self.first_frame {
             self.first_frame = false;
             #[cfg(target_os = "macos")]
@@ -144,10 +132,6 @@ impl eframe::App for PomodoroApp {
             #[cfg(target_os = "macos")]
             crate::platform::setup_macos_status_bar();
 
-            // Background thread — two jobs:
-            //  1. Keep the menu-bar status item accurate while minimised.
-            //  2. Reliable restore detection (catches the case where ui() frames
-            //     stop before isMiniaturized flips to true).
             #[cfg(target_os = "macos")]
             {
                 let shared = std::sync::Arc::clone(&self.status_bar_state);
@@ -173,10 +157,15 @@ impl eframe::App for PomodoroApp {
                             );
                         }
 
-                        // ── Restore detection ─────────────────────────────────
+                        // ── Restore detection (backup path) ───────────────────
+                        // Covers the race where ui() frames stop before
+                        // isMiniaturized flips to true.
                         let is_mini = crate::platform::window_is_minimized();
                         if was_mini && !is_mini {
-                            crate::platform::make_window_key_on_main_thread();
+                            ctx_bg.send_viewport_cmd_to(
+                                egui::ViewportId::ROOT,
+                                egui::ViewportCommand::Focus,
+                            );
                             needs_reset.store(true, std::sync::atomic::Ordering::Relaxed);
                         }
                         was_mini = is_mini;
@@ -187,8 +176,7 @@ impl eframe::App for PomodoroApp {
             }
         }
 
-        // Update macOS menu bar each frame and refresh the shared state so
-        // the background thread can extrapolate accurately while minimised.
+        // Update macOS menu bar each frame.
         #[cfg(target_os = "macos")]
         {
             let emoji: &'static str = match self.mode {
@@ -201,7 +189,6 @@ impl eframe::App for PomodoroApp {
             crate::platform::update_macos_status_bar(
                 &format!("{} {} min{}", emoji, mins, indicator)
             );
-            // Snapshot current state + timestamp for the background thread.
             if let Ok(mut s) = self.status_bar_state.lock() {
                 *s = (self.seconds_left, self.running, emoji, std::time::Instant::now());
             }
@@ -209,21 +196,16 @@ impl eframe::App for PomodoroApp {
 
         self.tick();
 
-        // Always schedule the next repaint. 200 ms when running (smooth countdown),
-        // 500 ms when idle — just fast enough to process input after a window
-        // restore/un-minimize without burning CPU while the timer is paused.
         ctx.request_repaint_after(std::time::Duration::from_millis(
             if self.running { 200 } else { 500 },
         ));
 
-        // Deferred viewport resize requested by toggle_tiny().
         if let Some(size) = self.pending_resize.take() {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(
                 egui::vec2(size[0], size[1]),
             ));
         }
 
-        // Keyboard shortcuts
         let (space, r_key, t_key, a_key) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
