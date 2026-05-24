@@ -160,23 +160,40 @@ pub fn window_is_minimized() -> bool {
 /// winit's windowDidDeminiaturize: fires request_redraw() but skips this
 /// call, so the window renders yet Cocoa doesn't route mouse events to it.
 ///
-/// [NSApplication mainWindow] may still be nil right after deminiaturize, so
-/// we fall back to the first entry in [NSApplication windows].
+/// When an NSStatusItem is present its backing NSStatusBarWindow (level 25)
+/// appears in [NSApplication windows] and causes AppKit to report
+/// hasVisibleWindows=YES, which suppresses the automatic makeKeyAndOrderFront:
+/// that would otherwise happen on Dock-icon clicks.  We must call it ourselves,
+/// and we must skip the status-bar window when searching for our app window.
 #[cfg(target_os = "macos")]
 pub fn make_window_key_on_main_thread() {
     use objc::{class, msg_send, runtime::{NO, Object}, sel, sel_impl};
     unsafe {
         let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
-        // Prefer mainWindow; fall back to first window in the windows array.
         let win: *mut Object = {
+            // mainWindow is nil when no window is currently key (e.g., right
+            // after deminiaturize before we make it key).
             let w: *mut Object = msg_send![app, mainWindow];
             if !w.is_null() {
                 w
             } else {
+                // Find the first window at a normal level.
+                // NSStatusBarWindowLevel = 25, NSDockWindowLevel = 20.
+                // Our window is at NSNormalWindowLevel (0) or NSFloatingWindowLevel (3).
                 let windows: *mut Object = msg_send![app, windows];
                 let count: usize = msg_send![windows, count];
-                if count == 0 { return; }
-                msg_send![windows, objectAtIndex: 0usize]
+                let mut found: *mut Object = std::ptr::null_mut();
+                for i in 0..count {
+                    let w: *mut Object = msg_send![windows, objectAtIndex: i];
+                    if w.is_null() { continue; }
+                    let level: isize = msg_send![w, level];
+                    if level < 20 {
+                        found = w;
+                        break;
+                    }
+                }
+                if found.is_null() { return; }
+                found
             }
         };
         if win.is_null() { return; }

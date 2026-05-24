@@ -31,15 +31,15 @@ pub struct PomodoroApp {
     /// stays accurate even when the window is minimised.
     #[cfg(target_os = "macos")]
     status_bar_state: std::sync::Arc<std::sync::Mutex<(u32, bool, &'static str, std::time::Instant)>>,
-    /// True while the window was miniaturized on the previous frame.
-    /// Lets ui() detect the false→true→false transition on the main thread.
+    /// True while the window was miniaturized on the previous ui() frame.
+    /// Used to detect the restore transition on the main thread (fast path).
     #[cfg(target_os = "macos")]
     was_minimized: bool,
-    /// Set when a minimize→restore transition is detected in ui().
-    /// Cleared by raw_input_hook() which injects PointerGone before the
-    /// next begin_frame() so egui starts with a clean pointer position.
+    /// Set by either the main thread or the background thread when a
+    /// minimize→restore transition is detected.  Cleared by raw_input_hook()
+    /// which injects PointerGone before the next begin_frame().
     #[cfg(target_os = "macos")]
-    needs_pointer_reset: bool,
+    needs_pointer_reset: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl PomodoroApp {
@@ -67,7 +67,7 @@ impl PomodoroApp {
             #[cfg(target_os = "macos")]
             was_minimized: false,
             #[cfg(target_os = "macos")]
-            needs_pointer_reset: false,
+            needs_pointer_reset: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 }
@@ -97,13 +97,12 @@ impl eframe::App for PomodoroApp {
         [0.0, 0.0, 0.0, 0.0]
     }
 
-    /// Runs before begin_frame(), so PointerGone here is actually processed by
-    /// egui's input machinery. Adding events via input_mut() inside ui() has no
-    /// effect on already-computed pointer state — this hook is the right place.
+    /// Runs before begin_frame(), so PointerGone here IS processed by egui's
+    /// input machinery.  Adding events via input_mut() inside ui() is too late
+    /// — begin_frame() has already derived pointer state from the raw events.
     #[cfg(target_os = "macos")]
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        if self.needs_pointer_reset {
-            self.needs_pointer_reset = false;
+        if self.needs_pointer_reset.swap(false, std::sync::atomic::Ordering::Relaxed) {
             raw_input.events.push(egui::Event::PointerGone);
         }
     }
@@ -111,23 +110,28 @@ impl eframe::App for PomodoroApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
-        // macOS: detect minimize→restore on every frame (main thread, no lock needed).
+        // macOS: main-thread fast-path for minimize→restore detection.
         //
-        // winit's windowDidDeminiaturize: fires request_redraw() but omits
-        // makeKeyAndOrderFront:. Without that call the window renders but is not
-        // the key window, so Cocoa stops routing mouse events to it — buttons freeze.
+        // When the NSStatusItem is present, [NSApplication windows] contains
+        // an NSStatusBarWindow (level 25).  AppKit then sees hasVisibleWindows=YES
+        // and skips the makeKeyAndOrderFront: it would otherwise call when the
+        // Dock icon is clicked.  The window appears but is not the key window,
+        // so Cocoa doesn't route mouse events to it — buttons freeze.
         //
-        // We poll isMiniaturized directly (via [NSApplication windows], because
-        // [NSApplication mainWindow] returns nil while a window is miniaturized).
-        // On the true→false transition we schedule makeKeyAndOrderFront: via
-        // performSelectorOnMainThread:waitUntilDone:NO, which defers it to the
-        // next run-loop turn (safe to call from within the render loop).
+        // We poll isMiniaturized every frame.  On the true→false transition we
+        // schedule makeKeyAndOrderFront: (deferred to the next run-loop turn via
+        // performSelectorOnMainThread:waitUntilDone:NO) and request a PointerGone
+        // injection before the next begin_frame().
+        //
+        // Note: ui() may stop receiving frames while the window is still
+        // animating into the Dock (before isMiniaturized flips).  The background
+        // thread below is the reliable path for that case.
         #[cfg(target_os = "macos")]
         {
             let is_mini = crate::platform::window_is_minimized();
             if self.was_minimized && !is_mini {
                 crate::platform::make_window_key_on_main_thread();
-                self.needs_pointer_reset = true;
+                self.needs_pointer_reset.store(true, std::sync::atomic::Ordering::Relaxed);
             }
             self.was_minimized = is_mini;
         }
@@ -140,15 +144,21 @@ impl eframe::App for PomodoroApp {
             #[cfg(target_os = "macos")]
             crate::platform::setup_macos_status_bar();
 
-            // Background thread: keep the menu-bar status item ticking while
-            // the window is minimised (ui() doesn't run during that time).
+            // Background thread — two jobs:
+            //  1. Keep the menu-bar status item accurate while minimised.
+            //  2. Reliable restore detection (catches the case where ui() frames
+            //     stop before isMiniaturized flips to true).
             #[cfg(target_os = "macos")]
             {
                 let shared = std::sync::Arc::clone(&self.status_bar_state);
                 let ctx_bg = ctx.clone();
+                let needs_reset = std::sync::Arc::clone(&self.needs_pointer_reset);
                 std::thread::spawn(move || {
+                    let mut was_mini = false;
                     loop {
-                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+
+                        // ── Status bar update ─────────────────────────────────
                         if let Ok(s) = shared.lock() {
                             let (secs, running, emoji, captured_at) = &*s;
                             let current = if *running {
@@ -162,6 +172,15 @@ impl eframe::App for PomodoroApp {
                                 &format!("{} {} min{}", emoji, mins, indicator)
                             );
                         }
+
+                        // ── Restore detection ─────────────────────────────────
+                        let is_mini = crate::platform::window_is_minimized();
+                        if was_mini && !is_mini {
+                            crate::platform::make_window_key_on_main_thread();
+                            needs_reset.store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        was_mini = is_mini;
+
                         ctx_bg.request_repaint();
                     }
                 });
