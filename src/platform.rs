@@ -132,6 +132,30 @@ pub fn minimize_window(ctx: &eframe::egui::Context) {
     ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Minimized(true));
 }
 
+/// Returns true when any app window is currently miniaturised (in the Dock).
+///
+/// [NSApplication mainWindow] returns nil while a window is miniaturised —
+/// miniaturised windows are not the main/key window. We must iterate the
+/// full [NSApplication windows] array which includes miniaturised windows.
+#[cfg(target_os = "macos")]
+pub fn window_is_minimized() -> bool {
+    use objc::{class, msg_send, sel, sel_impl, runtime::Object};
+    unsafe {
+        let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+        let windows: *mut Object = msg_send![app, windows];
+        let count: usize = msg_send![windows, count];
+        for i in 0..count {
+            let win: *mut Object = msg_send![windows, objectAtIndex: i];
+            if !win.is_null() {
+                let mini: bool = msg_send![win, isMiniaturized];
+                if mini { return true; }
+            }
+        }
+        false
+    }
+}
+
+
 /// Pointer to the NSStatusItem. Accessed only on the main thread.
 #[cfg(target_os = "macos")]
 static mut MACOS_STATUS_ITEM: *mut objc::runtime::Object = std::ptr::null_mut();
