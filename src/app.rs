@@ -31,12 +31,15 @@ pub struct PomodoroApp {
     /// stays accurate even when the window is minimised.
     #[cfg(target_os = "macos")]
     status_bar_state: std::sync::Arc<std::sync::Mutex<(u32, bool, &'static str, std::time::Instant)>>,
-    /// Set by the background thread when it detects the window has been
-    /// restored from the Dock. The main thread reads this flag each frame,
-    /// clears it, and injects a PointerGone event to flush stale button-down
-    /// state from the Dock click.
+    /// True while the window was miniaturized on the previous frame.
+    /// Lets ui() detect the false→true→false transition on the main thread.
     #[cfg(target_os = "macos")]
-    needs_pointer_reset: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    was_minimized: bool,
+    /// Set when a minimize→restore transition is detected in ui().
+    /// Cleared by raw_input_hook() which injects PointerGone before the
+    /// next begin_frame() so egui starts with a clean pointer position.
+    #[cfg(target_os = "macos")]
+    needs_pointer_reset: bool,
 }
 
 impl PomodoroApp {
@@ -62,7 +65,9 @@ impl PomodoroApp {
                 (0u32, false, "🍅", std::time::Instant::now())
             )),
             #[cfg(target_os = "macos")]
-            needs_pointer_reset: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            was_minimized: false,
+            #[cfg(target_os = "macos")]
+            needs_pointer_reset: false,
         }
     }
 }
@@ -92,15 +97,39 @@ impl eframe::App for PomodoroApp {
         [0.0, 0.0, 0.0, 0.0]
     }
 
+    /// Runs before begin_frame(), so PointerGone here is actually processed by
+    /// egui's input machinery. Adding events via input_mut() inside ui() has no
+    /// effect on already-computed pointer state — this hook is the right place.
+    #[cfg(target_os = "macos")]
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if self.needs_pointer_reset {
+            self.needs_pointer_reset = false;
+            raw_input.events.push(egui::Event::PointerGone);
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
-        // On macOS: flush stale egui pointer state that can accumulate from
-        // the Dock-restore click. The background thread sets this flag when it
-        // detects isMiniaturized transitioning false; we clear it here.
+        // macOS: detect minimize→restore on every frame (main thread, no lock needed).
+        //
+        // winit's windowDidDeminiaturize: fires request_redraw() but omits
+        // makeKeyAndOrderFront:. Without that call the window renders but is not
+        // the key window, so Cocoa stops routing mouse events to it — buttons freeze.
+        //
+        // We poll isMiniaturized directly (via [NSApplication windows], because
+        // [NSApplication mainWindow] returns nil while a window is miniaturized).
+        // On the true→false transition we schedule makeKeyAndOrderFront: via
+        // performSelectorOnMainThread:waitUntilDone:NO, which defers it to the
+        // next run-loop turn (safe to call from within the render loop).
         #[cfg(target_os = "macos")]
-        if self.needs_pointer_reset.swap(false, std::sync::atomic::Ordering::Relaxed) {
-            ctx.input_mut(|i| i.events.push(egui::Event::PointerGone));
+        {
+            let is_mini = crate::platform::window_is_minimized();
+            if self.was_minimized && !is_mini {
+                crate::platform::make_window_key_on_main_thread();
+                self.needs_pointer_reset = true;
+            }
+            self.was_minimized = is_mini;
         }
 
         // First-frame macOS setup.
@@ -111,30 +140,15 @@ impl eframe::App for PomodoroApp {
             #[cfg(target_os = "macos")]
             crate::platform::setup_macos_status_bar();
 
-            // Background thread — two jobs:
-            //  1. Keep the menu-bar status item accurate while minimised.
-            //  2. Detect Dock restore and fix input.
-            //
-            // winit's windowDidDeminiaturize: fires request_redraw() but skips
-            // makeKeyAndOrderFront:, so the window renders but Cocoa doesn't
-            // route mouse events to it (buttons appear frozen).
-            //
-            // This thread polls [NSWindow isMiniaturized] directly (ground
-            // truth, not winit's state). On the false→true→false transition it:
-            //   • dispatches makeKeyAndOrderFront: to the main thread via
-            //     performSelectorOnMainThread: (the correct thread-safe path)
-            //   • sets needs_pointer_reset so the main thread injects PointerGone
+            // Background thread: keep the menu-bar status item ticking while
+            // the window is minimised (ui() doesn't run during that time).
             #[cfg(target_os = "macos")]
             {
                 let shared = std::sync::Arc::clone(&self.status_bar_state);
                 let ctx_bg = ctx.clone();
-                let needs_reset = std::sync::Arc::clone(&self.needs_pointer_reset);
                 std::thread::spawn(move || {
-                    let mut was_mini = false;
                     loop {
-                        std::thread::sleep(std::time::Duration::from_secs(1));
-
-                        // ── Status bar update ─────────────────────────────────
+                        std::thread::sleep(std::time::Duration::from_millis(500));
                         if let Ok(s) = shared.lock() {
                             let (secs, running, emoji, captured_at) = &*s;
                             let current = if *running {
@@ -148,17 +162,6 @@ impl eframe::App for PomodoroApp {
                                 &format!("{} {} min{}", emoji, mins, indicator)
                             );
                         }
-
-                        // ── Restore detection ─────────────────────────────────
-                        let is_mini = crate::platform::window_is_minimized();
-                        if was_mini && !is_mini {
-                            // Window just came back from the Dock.
-                            // Re-assert key-window status on the main thread.
-                            crate::platform::make_window_key_on_main_thread();
-                            needs_reset.store(true, std::sync::atomic::Ordering::Relaxed);
-                        }
-                        was_mini = is_mini;
-
                         ctx_bg.request_repaint();
                     }
                 });
