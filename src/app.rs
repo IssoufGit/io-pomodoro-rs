@@ -29,9 +29,6 @@ pub struct PomodoroApp {
     /// (seconds_left, running, mode_emoji, captured_at)
     #[cfg(target_os = "macos")]
     status_bar_state: std::sync::Arc<std::sync::Mutex<(u32, bool, &'static str, std::time::Instant)>>,
-    /// True while the window was miniaturized on the previous ui() frame.
-    #[cfg(target_os = "macos")]
-    was_minimized: bool,
     /// Set when a restore transition is detected; cleared by raw_input_hook()
     /// which injects PointerGone before begin_frame().
     #[cfg(target_os = "macos")]
@@ -60,8 +57,6 @@ impl PomodoroApp {
             status_bar_state: std::sync::Arc::new(std::sync::Mutex::new(
                 (0u32, false, "🍅", std::time::Instant::now())
             )),
-            #[cfg(target_os = "macos")]
-            was_minimized: false,
             #[cfg(target_os = "macos")]
             needs_pointer_reset: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
@@ -101,30 +96,6 @@ impl eframe::App for PomodoroApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
-        // macOS: detect minimize→restore every frame.
-        //
-        // Root cause: NSStatusItem creates a backing NSStatusBarWindow that
-        // appears in [NSApplication windows].  AppKit then reports
-        // hasVisibleWindows=YES and skips the automatic makeKeyAndOrderFront:
-        // on Dock-icon clicks.  The window appears but is not the key window,
-        // so Cocoa stops routing mouse events to it — buttons freeze.
-        //
-        // Fix: send ViewportCommand::Focus on each restore transition.
-        // eframe routes this through winit's focus_window() which calls
-        // activateIgnoringOtherApps + makeKeyAndOrderFront on the main thread.
-        // Dual detection: main-thread (immediate, same frame as restore) and
-        // background thread (catches the race where frames stop before
-        // isMiniaturized flips to true).
-        #[cfg(target_os = "macos")]
-        {
-            let is_mini = crate::platform::window_is_minimized();
-            if self.was_minimized && !is_mini {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                self.needs_pointer_reset.store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-            self.was_minimized = is_mini;
-        }
-
         if self.first_frame {
             self.first_frame = false;
             #[cfg(target_os = "macos")]
@@ -157,11 +128,20 @@ impl eframe::App for PomodoroApp {
                             );
                         }
 
-                        // ── Restore detection (backup path) ───────────────────
-                        // Covers the race where ui() frames stop before
-                        // isMiniaturized flips to true.
+                        // ── Restore detection ─────────────────────────────────
+                        // egui-winit never updates viewport_info.minimized at
+                        // runtime on macOS (deadlock prevention). After a Dock
+                        // restore only Occluded(false) fires, leaving
+                        // info.minimized = Some(true) permanently, which keeps
+                        // is_visible = false so ui() never runs again.
+                        // Sending Minimized(false) resets that flag; Focus then
+                        // calls activateIgnoringOtherApps + makeKeyAndOrderFront.
                         let is_mini = crate::platform::window_is_minimized();
                         if was_mini && !is_mini {
+                            ctx_bg.send_viewport_cmd_to(
+                                egui::ViewportId::ROOT,
+                                egui::ViewportCommand::Minimized(false),
+                            );
                             ctx_bg.send_viewport_cmd_to(
                                 egui::ViewportId::ROOT,
                                 egui::ViewportCommand::Focus,
