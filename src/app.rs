@@ -25,16 +25,18 @@ pub struct PomodoroApp {
     pub(crate) pending_resize: Option<[f32; 2]>,
     pub(crate) always_on_top: bool,
     first_frame: bool,
-    /// Last Instant when ui() ran with the window focused. Only updated while
-    /// focused so a large gap at the next focused frame = just came back from
-    /// minimize / Dock. Used to trigger the restore-focus fix on macOS.
-    last_focused_time: std::time::Instant,
     /// Shared state for the background status bar ticker:
     /// (seconds_left, running, mode_emoji, captured_at)
     /// The thread re-computes the current value using elapsed time so it
     /// stays accurate even when the window is minimised.
     #[cfg(target_os = "macos")]
     status_bar_state: std::sync::Arc<std::sync::Mutex<(u32, bool, &'static str, std::time::Instant)>>,
+    /// Set by the background thread when it detects the window has been
+    /// restored from the Dock. The main thread reads this flag each frame,
+    /// clears it, and injects a PointerGone event to flush stale button-down
+    /// state from the Dock click.
+    #[cfg(target_os = "macos")]
+    needs_pointer_reset: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl PomodoroApp {
@@ -55,11 +57,12 @@ impl PomodoroApp {
             pending_resize: None,
             always_on_top: false,
             first_frame: true,
-            last_focused_time: std::time::Instant::now(),
             #[cfg(target_os = "macos")]
             status_bar_state: std::sync::Arc::new(std::sync::Mutex::new(
                 (0u32, false, "🍅", std::time::Instant::now())
             )),
+            #[cfg(target_os = "macos")]
+            needs_pointer_reset: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 }
@@ -92,27 +95,12 @@ impl eframe::App for PomodoroApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
-        // Detect window restore from minimize / Dock on macOS.
-        //
-        // winit's windowDidDeminiaturize: calls request_redraw() but does NOT
-        // call makeKeyAndOrderFront:, so the window renders yet Cocoa doesn't
-        // route mouse events to it — buttons appear live but do nothing.
-        //
-        // We track `last_focused_time` (updated only while focused). A gap
-        // > 600 ms when focus returns means we just came back from the Dock or
-        // a long alt-tab. We then:
-        //   1. Re-assert key-window status (deferred to avoid Metal re-entrancy).
-        //   2. Inject PointerGone to flush any stale egui button-down state
-        //      left over from the Dock click that triggered the restore.
-        let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
-        if focused {
-            let gap = self.last_focused_time.elapsed();
-            self.last_focused_time = std::time::Instant::now();
-            if gap > std::time::Duration::from_millis(600) {
-                #[cfg(target_os = "macos")]
-                crate::platform::request_window_focus();
-                ctx.input_mut(|i| i.events.push(egui::Event::PointerGone));
-            }
+        // On macOS: flush stale egui pointer state that can accumulate from
+        // the Dock-restore click. The background thread sets this flag when it
+        // detects isMiniaturized transitioning false; we clear it here.
+        #[cfg(target_os = "macos")]
+        if self.needs_pointer_reset.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            ctx.input_mut(|i| i.events.push(egui::Event::PointerGone));
         }
 
         // First-frame macOS setup.
@@ -122,33 +110,57 @@ impl eframe::App for PomodoroApp {
             crate::platform::apply_macos_transparency();
             #[cfg(target_os = "macos")]
             crate::platform::setup_macos_status_bar();
-            // Background thread: keeps the status bar current while minimized.
-            // It re-computes the remaining minutes from the captured state +
-            // elapsed time, so the display stays accurate without calling tick().
+
+            // Background thread — two jobs:
+            //  1. Keep the menu-bar status item accurate while minimised.
+            //  2. Detect Dock restore and fix input.
+            //
+            // winit's windowDidDeminiaturize: fires request_redraw() but skips
+            // makeKeyAndOrderFront:, so the window renders but Cocoa doesn't
+            // route mouse events to it (buttons appear frozen).
+            //
+            // This thread polls [NSWindow isMiniaturized] directly (ground
+            // truth, not winit's state). On the false→true→false transition it:
+            //   • dispatches makeKeyAndOrderFront: to the main thread via
+            //     performSelectorOnMainThread: (the correct thread-safe path)
+            //   • sets needs_pointer_reset so the main thread injects PointerGone
             #[cfg(target_os = "macos")]
             {
                 let shared = std::sync::Arc::clone(&self.status_bar_state);
                 let ctx_bg = ctx.clone();
-                std::thread::spawn(move || loop {
-                    std::thread::sleep(std::time::Duration::from_secs(1));
-                    if let Ok(s) = shared.lock() {
-                        let (secs, running, emoji, captured_at) = &*s;
-                        let current = if *running {
-                            secs.saturating_sub(captured_at.elapsed().as_secs() as u32)
-                        } else {
-                            *secs
-                        };
-                        let mins = current / 60;
-                        let indicator = if *running { " ▶" } else { "" };
-                        crate::platform::update_macos_status_bar(
-                            &format!("{} {} min{}", emoji, mins, indicator)
-                        );
+                let needs_reset = std::sync::Arc::clone(&self.needs_pointer_reset);
+                std::thread::spawn(move || {
+                    let mut was_mini = false;
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+
+                        // ── Status bar update ─────────────────────────────────
+                        if let Ok(s) = shared.lock() {
+                            let (secs, running, emoji, captured_at) = &*s;
+                            let current = if *running {
+                                secs.saturating_sub(captured_at.elapsed().as_secs() as u32)
+                            } else {
+                                *secs
+                            };
+                            let mins = current / 60;
+                            let indicator = if *running { " ▶" } else { "" };
+                            crate::platform::update_macos_status_bar(
+                                &format!("{} {} min{}", emoji, mins, indicator)
+                            );
+                        }
+
+                        // ── Restore detection ─────────────────────────────────
+                        let is_mini = crate::platform::window_is_minimized();
+                        if was_mini && !is_mini {
+                            // Window just came back from the Dock.
+                            // Re-assert key-window status on the main thread.
+                            crate::platform::make_window_key_on_main_thread();
+                            needs_reset.store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        was_mini = is_mini;
+
+                        ctx_bg.request_repaint();
                     }
-                    // On macOS, eframe stops calling ui() while the window is in the
-                    // Dock. Calling request_repaint() from this thread wakes the event
-                    // loop so the first frame after un-minimise is processed immediately
-                    // and buttons are responsive again.
-                    ctx_bg.request_repaint();
                 });
             }
         }
@@ -181,8 +193,6 @@ impl eframe::App for PomodoroApp {
         ctx.request_repaint_after(std::time::Duration::from_millis(
             if self.running { 200 } else { 500 },
         ));
-
-
 
         // Deferred viewport resize requested by toggle_tiny().
         if let Some(size) = self.pending_resize.take() {
