@@ -132,16 +132,26 @@ pub fn minimize_window(ctx: &eframe::egui::Context) {
     ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Minimized(true));
 }
 
-/// Returns true when the main window is currently miniaturised (in the Dock).
-/// Safe to call from a background thread — reads a single boolean property.
+/// Returns true when any app window is currently miniaturised (in the Dock).
+///
+/// [NSApplication mainWindow] returns nil while a window is miniaturised —
+/// miniaturised windows are not the main/key window. We must iterate the
+/// full [NSApplication windows] array which includes miniaturised windows.
 #[cfg(target_os = "macos")]
 pub fn window_is_minimized() -> bool {
     use objc::{class, msg_send, sel, sel_impl, runtime::Object};
     unsafe {
         let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
-        let win: *mut Object = msg_send![app, mainWindow];
-        if win.is_null() { return false; }
-        msg_send![win, isMiniaturized]
+        let windows: *mut Object = msg_send![app, windows];
+        let count: usize = msg_send![windows, count];
+        for i in 0..count {
+            let win: *mut Object = msg_send![windows, objectAtIndex: i];
+            if !win.is_null() {
+                let mini: bool = msg_send![win, isMiniaturized];
+                if mini { return true; }
+            }
+        }
+        false
     }
 }
 
@@ -150,14 +160,25 @@ pub fn window_is_minimized() -> bool {
 /// winit's windowDidDeminiaturize: fires request_redraw() but skips this
 /// call, so the window renders yet Cocoa doesn't route mouse events to it.
 ///
-/// performSelectorOnMainThread:withObject:waitUntilDone: is the correct
-/// Cocoa API for calling main-thread UI from a background thread.
+/// [NSApplication mainWindow] may still be nil right after deminiaturize, so
+/// we fall back to the first entry in [NSApplication windows].
 #[cfg(target_os = "macos")]
 pub fn make_window_key_on_main_thread() {
     use objc::{class, msg_send, runtime::{NO, Object}, sel, sel_impl};
     unsafe {
         let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
-        let win: *mut Object = msg_send![app, mainWindow];
+        // Prefer mainWindow; fall back to first window in the windows array.
+        let win: *mut Object = {
+            let w: *mut Object = msg_send![app, mainWindow];
+            if !w.is_null() {
+                w
+            } else {
+                let windows: *mut Object = msg_send![app, windows];
+                let count: usize = msg_send![windows, count];
+                if count == 0 { return; }
+                msg_send![windows, objectAtIndex: 0usize]
+            }
+        };
         if win.is_null() { return; }
         let nil: *mut Object = std::ptr::null_mut();
         let _: () = msg_send![
