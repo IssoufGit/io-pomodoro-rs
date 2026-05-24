@@ -136,7 +136,7 @@ pub fn minimize_window(ctx: &eframe::egui::Context) {
 /// Safe to call from a background thread — reads a single boolean property.
 #[cfg(target_os = "macos")]
 pub fn window_is_minimized() -> bool {
-    use objc::{class, msg_send, runtime::Object};
+    use objc::{class, msg_send, sel, sel_impl, runtime::Object};
     unsafe {
         let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
         let win: *mut Object = msg_send![app, mainWindow];
