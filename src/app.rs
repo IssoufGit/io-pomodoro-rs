@@ -141,10 +141,12 @@ impl eframe::App for PomodoroApp {
 
         self.tick();
 
-        // Keep repainting while the timer is counting down.
-        if self.running {
-            ctx.request_repaint_after(std::time::Duration::from_millis(200));
-        }
+        // Always schedule the next repaint. 200 ms when running (smooth countdown),
+        // 500 ms when idle — just fast enough to process input after a window
+        // restore/un-minimize without burning CPU while the timer is paused.
+        ctx.request_repaint_after(std::time::Duration::from_millis(
+            if self.running { 200 } else { 500 },
+        ));
 
 
 
