@@ -100,6 +100,7 @@ impl eframe::App for PomodoroApp {
             #[cfg(target_os = "macos")]
             {
                 let shared = std::sync::Arc::clone(&self.status_bar_state);
+                let ctx_bg = ctx.clone();
                 std::thread::spawn(move || loop {
                     std::thread::sleep(std::time::Duration::from_secs(1));
                     if let Ok(s) = shared.lock() {
@@ -115,6 +116,11 @@ impl eframe::App for PomodoroApp {
                             &format!("{} {} min{}", emoji, mins, indicator)
                         );
                     }
+                    // On macOS, eframe stops calling ui() while the window is in the
+                    // Dock. Calling request_repaint() from this thread wakes the event
+                    // loop so the first frame after un-minimise is processed immediately
+                    // and buttons are responsive again.
+                    ctx_bg.request_repaint();
                 });
             }
         }
