@@ -132,6 +132,31 @@ pub fn minimize_window(ctx: &eframe::egui::Context) {
     ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Minimized(true));
 }
 
+/// Re-assert the main window as the key window after restore from Dock.
+///
+/// winit's windowDidDeminiaturize: fires request_redraw() but skips
+/// makeKeyAndOrderFront:, so the window is visible yet not key — Cocoa stops
+/// routing mouse events to it and all buttons appear frozen.
+///
+/// Deferred via performSelector:withObject:afterDelay: so it runs after the
+/// current Metal frame, avoiding re-entrancy in the render pipeline.
+#[cfg(target_os = "macos")]
+pub fn request_window_focus() {
+    use objc::{class, msg_send, sel, sel_impl, runtime::Object};
+    unsafe {
+        let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+        let win: *mut Object = msg_send![app, mainWindow];
+        if win.is_null() { return; }
+        let nil: *mut Object = std::ptr::null_mut();
+        let _: () = msg_send![
+            win,
+            performSelector: sel!(makeKeyAndOrderFront:)
+            withObject: nil
+            afterDelay: 0.0f64
+        ];
+    }
+}
+
 /// Pointer to the NSStatusItem. Accessed only on the main thread.
 #[cfg(target_os = "macos")]
 static mut MACOS_STATUS_ITEM: *mut objc::runtime::Object = std::ptr::null_mut();
