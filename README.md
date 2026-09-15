@@ -23,6 +23,23 @@ Or copy it somewhere on your PATH and double-click in your file manager:
 cp target/release/pomodoro ~/.local/bin/
 ```
 
+## macOS
+
+Only prerequisite is the Xcode Command Line Tools (`xcode-select --install`) —
+no extra system libraries needed, unlike Linux.
+
+```bash
+cargo build --release
+./target/release/pomodoro
+```
+
+For a proper app bundle you can launch from Launchpad/Spotlight instead of the
+raw binary, run `./install.sh` — it builds the release binary and installs a
+`Pomodoro.app` bundle to `~/Applications`.
+
+The menu bar shows a 🍅 status item while the app is running — this is a
+macOS-only feature (there's no equivalent tray icon on Linux/X11 yet).
+
 ## Why the icon may not show up at first
 
 The icon embedded in the binary works on **X11** (title bar, Alt-Tab, dock — all
@@ -77,8 +94,13 @@ window with this `.desktop` entry. Without it, the dock shows a generic icon.
 
 ## Data location
 
-History saves to `$XDG_DATA_HOME/pomodoro/history.json` (typically
-`~/.local/share/pomodoro/history.json`). Plain JSON — back it up however you want.
+History saves to a per-OS app data directory, resolved via the `dirs` crate:
+
+- **Linux** — `$XDG_DATA_HOME/pomodoro/history.json` (typically
+  `~/.local/share/pomodoro/history.json`)
+- **macOS** — `~/Library/Application Support/pomodoro/history.json`
+
+Plain JSON — back it up however you want.
 
 The Export CSV button writes `pomodoro-history-YYYY-MM-DD.csv` to the same
 directory.
@@ -92,7 +114,8 @@ directory.
 
 Pure-Rust GUI via `egui`/`eframe`. On Linux you need standard X11 or Wayland
 libraries — already present on any desktop. Headless servers won't work (no
-display).
+display). On macOS the Xcode Command Line Tools are the only requirement — no
+extra system libs.
 
 If `cargo build` complains about missing system libs, install:
 
@@ -103,3 +126,16 @@ sudo apt install libxkbcommon-dev libwayland-dev libxcb1-dev
 # Fedora
 sudo dnf install libxkbcommon-devel wayland-devel libxcb-devel
 ```
+
+**Always-on-top on Linux X11** additionally requires the `wmctrl` binary on
+`PATH` (winit alone doesn't reliably set the required window-manager hint):
+
+```bash
+sudo apt install wmctrl   # Debian/Ubuntu
+sudo dnf install wmctrl   # Fedora
+```
+
+If `wmctrl` isn't installed, the pin button is simply disabled with a tooltip
+explaining how to enable it — nothing breaks. Not required on Wayland
+(always-on-top is unsupported there by design, same button/tooltip pattern) or
+on macOS (handled natively via `NSWindow` levels).

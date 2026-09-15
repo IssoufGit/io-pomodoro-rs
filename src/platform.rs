@@ -28,10 +28,29 @@ pub fn using_os_decorations() -> bool {
 /// Used by the UI to enable or grey out the pin button.
 pub fn always_on_top_supported() -> bool {
     #[cfg(target_os = "linux")]
-    return !is_wayland();
+    return !is_wayland() && linux::wmctrl_available();
 
     #[cfg(not(target_os = "linux"))]
     true
+}
+
+/// Explains why the pin button is disabled, if it is. `None` means
+/// always-on-top is supported (or this isn't Linux, where it's always
+/// supported via ViewportCommand::WindowLevel alone).
+#[cfg(target_os = "linux")]
+pub fn always_on_top_unsupported_reason() -> Option<&'static str> {
+    if is_wayland() {
+        Some("not supported on Wayland")
+    } else if !linux::wmctrl_available() {
+        Some("install \"wmctrl\" to enable (e.g. sudo apt install wmctrl)")
+    } else {
+        None
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn always_on_top_unsupported_reason() -> Option<&'static str> {
+    None
 }
 
 /// Apply always-on-top. `egui_ctx` must also send `ViewportCommand::WindowLevel`
@@ -64,44 +83,57 @@ pub fn is_wayland() -> bool {
 
 #[cfg(target_os = "linux")]
 mod linux {
+    /// True when the `wmctrl` binary is found on `PATH`. Cached after the
+    /// first check since PATH doesn't change during the app's lifetime.
+    pub fn wmctrl_available() -> bool {
+        static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *AVAILABLE.get_or_init(|| {
+            std::env::var_os("PATH")
+                .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join("wmctrl").is_file()))
+                .unwrap_or(false)
+        })
+    }
+
     /// On X11, `wmctrl` sends the `_NET_WM_STATE_ABOVE` ClientMessage to the
     /// root window, which is what window managers actually listen for.
     /// Install with: sudo apt install wmctrl  (or dnf / pacman equivalent).
-    /// Silently does nothing if wmctrl is absent or the session is Wayland.
+    /// Does nothing if the session is Wayland; the UI gates on
+    /// `wmctrl_available()` so this normally only runs when the binary exists.
     pub fn set_always_on_top(window_title: &str, enable: bool) {
         if super::is_wayland() {
             return;
         }
         let op = if enable { "add" } else { "remove" };
-        let _ = std::process::Command::new("wmctrl")
-            .args(["-r", window_title, "-b", &format!("{},above", op)])
-            .spawn();
+        if let Err(err) = std::process::Command::new("wmctrl")
+            .args(["-r", window_title, "-b", &format!("{op},above")])
+            .spawn()
+        {
+            eprintln!("pomodoro: failed to run wmctrl: {err}");
+        }
     }
 }
 
 // ── macOS: window management & status bar ─────────────────────────────────────
 
-/// Force the NSWindow and its Metal layer to composite with alpha.
-/// eframe's with_transparent(true) sometimes doesn't propagate to the
-/// CAMetalLayer on macOS — calling this on the first frame fixes it.
+/// Returns the app's main content window, falling back to the first entry
+/// in `[NSApplication windows]` when `mainWindow` is nil (e.g. very early
+/// during startup, before the window has become key/main — see
+/// `window_is_minimized` for the same class of issue).
 #[cfg(target_os = "macos")]
-pub fn apply_macos_transparency() {
-    use objc::{class, msg_send, runtime::NO, sel, sel_impl, runtime::Object};
+fn app_window() -> *mut objc::runtime::Object {
+    use objc::{class, msg_send, sel, sel_impl, runtime::Object};
     unsafe {
         let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
         let window: *mut Object = msg_send![app, mainWindow];
-        if window.is_null() { return; }
-        let _: () = msg_send![window, setOpaque: NO];
-        let clear: *mut Object = msg_send![class!(NSColor), clearColor];
-        let _: () = msg_send![window, setBackgroundColor: clear];
-        let _: () = msg_send![window, invalidateShadow];
-        let view: *mut Object = msg_send![window, contentView];
-        if !view.is_null() {
-            let layer: *mut Object = msg_send![view, layer];
-            if !layer.is_null() {
-                let _: () = msg_send![layer, setOpaque: NO];
-            }
+        if !window.is_null() {
+            return window;
         }
+        let windows: *mut Object = msg_send![app, windows];
+        let count: usize = msg_send![windows, count];
+        if count > 0 {
+            return msg_send![windows, objectAtIndex: 0usize];
+        }
+        std::ptr::null_mut()
     }
 }
 
@@ -112,10 +144,9 @@ pub fn apply_macos_transparency() {
 pub fn minimize_window(ctx: &eframe::egui::Context) {
     #[cfg(target_os = "macos")]
     {
-        use objc::{class, msg_send, sel, sel_impl, runtime::Object};
+        use objc::{msg_send, sel, sel_impl, runtime::Object};
         unsafe {
-            let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
-            let win: *mut Object = msg_send![app, mainWindow];
+            let win = app_window();
             if !win.is_null() {
                 let nil: *mut Object = std::ptr::null_mut();
                 let _: () = msg_send![

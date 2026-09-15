@@ -51,7 +51,7 @@ impl PomodoroApp {
                             }
                             ui.add_space(6.0);
                             if title_bar::wm_button(ui, "−", title_bar::COLOR_MINIMIZE).clicked() {
-                                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                                crate::platform::minimize_window(ctx);
                             }
                             ui.add_space(8.0);
                             ui.separator();
@@ -71,6 +71,12 @@ impl PomodoroApp {
                                     .frame(false),
                                 )
                                 .on_hover_text("Always on top (A) — or right-click title bar");
+                            let pin_resp =
+                                if let Some(reason) = crate::platform::always_on_top_unsupported_reason() {
+                                    pin_resp.on_disabled_hover_text(format!("Always on top — {reason}"))
+                                } else {
+                                    pin_resp
+                                };
                             if pin_resp.clicked() {
                                 self.always_on_top = !self.always_on_top;
                                 PomodoroApp::apply_always_on_top(ctx, self.always_on_top);

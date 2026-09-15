@@ -60,7 +60,7 @@ pub fn setup_background(
         let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
 
         if ui.button("Minimize").clicked() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            crate::platform::minimize_window(ctx);
             ui.close_menu();
         }
 
@@ -84,9 +84,9 @@ pub fn setup_background(
             PomodoroApp::apply_always_on_top(ctx, app.always_on_top);
             ui.close_menu();
         }
-        if !aot_supported {
+        if let Some(reason) = crate::platform::always_on_top_unsupported_reason() {
             ui.label(
-                egui::RichText::new("(not supported on Wayland)")
+                egui::RichText::new(format!("({reason})"))
                     .small()
                     .color(egui::Color32::GRAY),
             );

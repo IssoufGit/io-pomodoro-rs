@@ -81,10 +81,6 @@ impl PomodoroApp {
 // ── eframe::App ───────────────────────────────────────────────────────────────
 
 impl eframe::App for PomodoroApp {
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.0, 0.0, 0.0, 0.0]
-    }
-
     /// Runs before begin_frame() so PointerGone is actually processed by egui.
     #[cfg(target_os = "macos")]
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
@@ -98,8 +94,6 @@ impl eframe::App for PomodoroApp {
 
         if self.first_frame {
             self.first_frame = false;
-            #[cfg(target_os = "macos")]
-            crate::platform::apply_macos_transparency();
             #[cfg(target_os = "macos")]
             crate::platform::setup_macos_status_bar();
 

@@ -28,7 +28,6 @@ fn main() -> eframe::Result<()> {
                 .with_app_id("pomodoro")
                 .with_icon(std::sync::Arc::new(make_icon()))
                 .with_decorations(os_decorations)
-                .with_transparent(true)
         },
         ..Default::default()
     };
@@ -43,11 +42,9 @@ fn main() -> eframe::Result<()> {
             style.spacing.button_padding = egui::vec2(10.0, 5.0);
             cc.egui_ctx.set_style(style);
 
-            // Semi-transparent visuals so the OS compositor shows through.
-            // Each egui layer has its own color slot; all must be set.
             let mut visuals = egui::Visuals::dark();
             // Top-level panels and floating windows
-            let panel_bg = egui::Color32::from_rgba_unmultiplied(20, 20, 20, 200);
+            let panel_bg = egui::Color32::from_rgb(20, 20, 20);
             visuals.panel_fill = panel_bg;
             visuals.window_fill = panel_bg;
             // Frame::group fills (stat cards, settings boxes, history list)
