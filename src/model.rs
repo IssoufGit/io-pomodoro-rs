@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 pub const APP_NAME: &str = "pomodoro";
 pub const FULL_SIZE: [f32; 2] = [380.0, 620.0];
-pub const TINY_SIZE: [f32; 2] = [280.0, 150.0];
+pub const TINY_SIZE: [f32; 2] = [280.0, 180.0];
 pub const FOCUS_PRESETS: [u32; 5] = [15, 25, 45, 60, 90];
 
 // ── Mode ─────────────────────────────────────────────────────────────────────
@@ -32,6 +32,14 @@ impl Mode {
             Mode::Focus => "Focus",
             Mode::ShortBreak => "Break",
             Mode::LongBreak => "Long break",
+        }
+    }
+
+    pub fn emoji(&self) -> &'static str {
+        match self {
+            Mode::Focus => "🍅",
+            Mode::ShortBreak => "☕",
+            Mode::LongBreak => "🌙",
         }
     }
 

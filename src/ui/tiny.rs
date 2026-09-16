@@ -134,6 +134,12 @@ impl PomodoroApp {
             );
             ui.add_space(4.0);
 
+            // ── Focus duration ──────────────────────────────────────────────────
+            ui.horizontal(|ui| {
+                crate::ui::widgets::focus_duration_menu(ui, self);
+            });
+            ui.add_space(4.0);
+
             // ── Controls + today summary ──────────────────────────────────────
             ui.horizontal(|ui| {
                 let start_text = if self.running { "⏸" } else { "▶" };
