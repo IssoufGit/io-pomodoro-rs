@@ -1,7 +1,7 @@
 # Pomodoro
 
-[![CI](https://github.com/IssoufGit/io-pomodoro-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/IssoufGit/io-pomodoro-rs/actions/workflows/ci.yml)
-![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-blue)
+[![macOS](https://github.com/IssoufGit/io-pomodoro-rs/actions/workflows/ci-macos.yml/badge.svg)](https://github.com/IssoufGit/io-pomodoro-rs/actions/workflows/ci-macos.yml)
+[![Linux](https://github.com/IssoufGit/io-pomodoro-rs/actions/workflows/ci-linux.yml/badge.svg)](https://github.com/IssoufGit/io-pomodoro-rs/actions/workflows/ci-linux.yml)
 
 A local-only pomodoro timer with persistent history. No network, no telemetry.
 
