@@ -19,19 +19,36 @@ pub fn stat_card(ui: &mut egui::Ui, label: &str, value: &str, unit: &str) {
 }
 
 /// Popup-free focus-duration control for the tiny strip, where a dropdown
-/// would be clipped by the short window: each click adds 5 minutes, wrapping
-/// back to 5 after the 180-minute maximum.
+/// would be clipped by the short window: "-5min" / "+5min" buttons that snap
+/// to multiples of 5 within 5..=180 and grey out at either end.
 pub fn focus_duration_stepper(ui: &mut egui::Ui, app: &mut PomodoroApp) {
     const STEP: u32 = 5;
+    const MIN: u32 = 5;
     const MAX: u32 = 180;
+    let current = app.settings.focus_min;
+    let hover = format!("Focus duration: {current} min");
+
+    // Snap to the neighbouring multiple of 5 (a custom 23 goes to 20 or 25).
+    let down = (current.div_ceil(STEP) - 1) * STEP;
+    let up = (current / STEP + 1) * STEP;
+
+    let mut next = None;
     if ui
-        .small_button(format!("{}m +", app.settings.focus_min))
-        .on_hover_text("Focus duration — click to add 5 min")
+        .add_enabled(current > MIN, egui::Button::new("-5min").small())
+        .on_hover_text(&hover)
         .clicked()
     {
-        // Snap to the next multiple of 5 (a custom value like 23 goes to 25).
-        let next = (app.settings.focus_min / STEP + 1) * STEP;
-        app.settings.focus_min = if next > MAX { STEP } else { next };
+        next = Some(down.max(MIN));
+    }
+    if ui
+        .add_enabled(current < MAX, egui::Button::new("+5min").small())
+        .on_hover_text(&hover)
+        .clicked()
+    {
+        next = Some(up.min(MAX));
+    }
+    if let Some(min) = next {
+        app.settings.focus_min = min;
         app.apply_settings_change();
     }
 }

@@ -54,15 +54,29 @@ impl PomodoroApp {
                         ui.visuals().strong_text_color()
                     };
                     let (today_count, today_min, _) = self.today_stats();
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{:02}:{:02}",
-                            self.seconds_left / 60,
-                            self.seconds_left % 60
-                        ))
-                        .font(egui::FontId::monospace(18.0))
-                        .color(color),
-                    )
+                    // Whole minutes only — ticking seconds are distracting in
+                    // an always-visible strip. Matches the status bar text.
+                    let mut job = egui::text::LayoutJob::default();
+                    job.append(
+                        &format!("{}", self.seconds_left / 60),
+                        0.0,
+                        egui::text::TextFormat {
+                            font_id: egui::FontId::monospace(18.0),
+                            color,
+                            ..Default::default()
+                        },
+                    );
+                    job.append(
+                        " min",
+                        0.0,
+                        egui::text::TextFormat {
+                            font_id: egui::FontId::proportional(12.0),
+                            color,
+                            valign: egui::Align::Center,
+                            ..Default::default()
+                        },
+                    );
+                    ui.label(job)
                     .on_hover_text(format!(
                         "{} · today: {} sessions, {}m",
                         self.mode.label(),
