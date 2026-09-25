@@ -12,7 +12,7 @@ mod ui;
 use app::PomodoroApp;
 use eframe::egui;
 use icon::make_icon;
-use model::FULL_SIZE;
+use model::{FULL_MIN_SIZE, FULL_SIZE};
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -23,7 +23,7 @@ fn main() -> eframe::Result<()> {
             let os_decorations = crate::platform::using_os_decorations();
             egui::ViewportBuilder::default()
                 .with_inner_size(FULL_SIZE)
-                .with_min_inner_size([220.0, 100.0])
+                .with_min_inner_size(FULL_MIN_SIZE)
                 .with_title("Pomodoro")
                 .with_app_id("pomodoro")
                 .with_icon(std::sync::Arc::new(make_icon()))

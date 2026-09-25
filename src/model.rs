@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 
 pub const APP_NAME: &str = "pomodoro";
 pub const FULL_SIZE: [f32; 2] = [380.0, 620.0];
-pub const TINY_SIZE: [f32; 2] = [280.0, 180.0];
+pub const TINY_SIZE: [f32; 2] = [440.0, 40.0];
+pub const FULL_MIN_SIZE: [f32; 2] = [220.0, 100.0];
+pub const TINY_MIN_SIZE: [f32; 2] = [200.0, 36.0];
 pub const FOCUS_PRESETS: [u32; 5] = [15, 25, 45, 60, 90];
 
 // ── Mode ─────────────────────────────────────────────────────────────────────

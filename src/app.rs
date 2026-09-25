@@ -1,7 +1,7 @@
 // PomodoroApp: struct definition, construction, and the eframe update loop.
 // Timer logic lives in timer.rs; UI rendering lives in ui/.
 
-use crate::model::{Mode, Session, Settings};
+use crate::model::{Mode, Session, Settings, FULL_MIN_SIZE, TINY_MIN_SIZE};
 use crate::persistence::load_state;
 use eframe::egui;
 use std::time::Instant;
@@ -363,9 +363,15 @@ impl eframe::App for PomodoroApp {
         ));
 
         if let Some(size) = self.pending_resize.take() {
+            // Min size first, otherwise the full-mode minimum clamps the strip.
+            let min = if self.tiny_mode { TINY_MIN_SIZE } else { FULL_MIN_SIZE };
+            ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(
+                egui::vec2(min[0], min[1]),
+            ));
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(
                 egui::vec2(size[0], size[1]),
             ));
+            crate::platform::set_rounded_corners(self.tiny_mode);
         }
 
         let (space, r_key, t_key, a_key) = ctx.input(|i| {

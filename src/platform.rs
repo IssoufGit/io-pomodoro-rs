@@ -163,6 +163,40 @@ pub fn minimize_window(ctx: &eframe::egui::Context) {
     ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Minimized(true));
 }
 
+/// Round (or square back up) the window corners. Used by tiny mode's strip.
+///
+/// This clips the content view's layer in the compositor rather than relying
+/// on the Metal surface rendering alpha (which never worked, see git history),
+/// so egui keeps drawing an opaque background.
+pub fn set_rounded_corners(enable: bool) {
+    #[cfg(target_os = "macos")]
+    {
+        use objc::{class, msg_send, sel, sel_impl, runtime::{Object, NO, YES}};
+        unsafe {
+            let win = app_window();
+            if win.is_null() {
+                return;
+            }
+            let _: () = msg_send![win, setOpaque: NO];
+            let clear: *mut Object = msg_send![class!(NSColor), clearColor];
+            let _: () = msg_send![win, setBackgroundColor: clear];
+            let view: *mut Object = msg_send![win, contentView];
+            if !view.is_null() {
+                let _: () = msg_send![view, setWantsLayer: YES];
+                let layer: *mut Object = msg_send![view, layer];
+                if !layer.is_null() {
+                    let radius: f64 = if enable { 12.0 } else { 0.0 };
+                    let _: () = msg_send![layer, setCornerRadius: radius];
+                    let _: () = msg_send![layer, setMasksToBounds: if enable { YES } else { NO }];
+                }
+            }
+            let _: () = msg_send![win, invalidateShadow];
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = enable;
+}
+
 /// Returns true when any app window is currently miniaturised (in the Dock).
 ///
 /// [NSApplication mainWindow] returns nil while a window is miniaturised —

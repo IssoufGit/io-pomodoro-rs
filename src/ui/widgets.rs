@@ -1,7 +1,6 @@
 // Reusable UI widgets shared between full and tiny views.
 
 use crate::app::PomodoroApp;
-use crate::model::FOCUS_PRESETS;
 use eframe::egui;
 
 /// A small three-line stat card used in the stats row (Today / Focus Time / All Time).
@@ -19,35 +18,20 @@ pub fn stat_card(ui: &mut egui::Ui, label: &str, value: &str, unit: &str) {
         });
 }
 
-/// Compact focus-duration picker for tight spaces (tiny mode): a menu button
-/// showing the current duration that opens a popup with the same presets and
-/// custom drag-value used in the full view's "Focus duration" group.
-pub fn focus_duration_menu(ui: &mut egui::Ui, app: &mut PomodoroApp) {
-    ui.menu_button(format!("{}m ▾", app.settings.focus_min), |ui| {
-        let mut changed = false;
-        ui.horizontal_wrapped(|ui| {
-            for preset in FOCUS_PRESETS {
-                let selected = app.settings.focus_min == preset;
-                if ui.selectable_label(selected, format!("{}m", preset)).clicked() && !selected {
-                    app.settings.focus_min = preset;
-                    changed = true;
-                    ui.close_menu();
-                }
-            }
-        });
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.label("Custom:");
-            let resp = ui.add(
-                egui::DragValue::new(&mut app.settings.focus_min)
-                    .range(1..=180)
-                    .speed(1.0)
-                    .suffix(" min"),
-            );
-            changed |= resp.changed();
-        });
-        if changed {
-            app.apply_settings_change();
-        }
-    });
+/// Popup-free focus-duration control for the tiny strip, where a dropdown
+/// would be clipped by the short window: each click adds 5 minutes, wrapping
+/// back to 5 after the 180-minute maximum.
+pub fn focus_duration_stepper(ui: &mut egui::Ui, app: &mut PomodoroApp) {
+    const STEP: u32 = 5;
+    const MAX: u32 = 180;
+    if ui
+        .small_button(format!("{}m +", app.settings.focus_min))
+        .on_hover_text("Focus duration — click to add 5 min")
+        .clicked()
+    {
+        // Snap to the next multiple of 5 (a custom value like 23 goes to 25).
+        let next = (app.settings.focus_min / STEP + 1) * STEP;
+        app.settings.focus_min = if next > MAX { STEP } else { next };
+        app.apply_settings_change();
+    }
 }
