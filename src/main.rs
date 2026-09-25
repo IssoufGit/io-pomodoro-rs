@@ -7,6 +7,7 @@ mod model;
 mod persistence;
 mod timer;
 mod platform;
+mod status_bar;
 mod ui;
 
 use app::PomodoroApp;

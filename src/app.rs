@@ -31,7 +31,7 @@ pub struct PomodoroApp {
     /// background thread applies menu-bar commands and natural session
     /// completion directly to this when the window isn't around to do it;
     /// `ui()` adopts those changes into `self` once it runs again.
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     shared_timer: std::sync::Arc<std::sync::Mutex<SharedTimer>>,
     /// Set when a restore transition is detected; cleared by raw_input_hook()
     /// which injects PointerGone before begin_frame().
@@ -43,7 +43,7 @@ impl PomodoroApp {
     pub fn new() -> Self {
         let persisted = load_state().unwrap_or_default();
         let total = persisted.settings.focus_min * 60;
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         let shared_timer = std::sync::Arc::new(std::sync::Mutex::new(SharedTimer::new(
             &persisted.settings,
             persisted.sessions.clone(),
@@ -64,7 +64,7 @@ impl PomodoroApp {
             pending_resize: None,
             always_on_top: false,
             first_frame: true,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             shared_timer,
             #[cfg(target_os = "macos")]
             needs_pointer_reset: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -72,13 +72,13 @@ impl PomodoroApp {
     }
 }
 
-// ── SharedTimer (macOS only) ────────────────────────────────────────────────
+// ── SharedTimer (macOS + Linux) ─────────────────────────────────────────────
 //
 // Owns the timer fields the background thread needs to apply menu-bar
 // commands and detect natural session completion on its own, independent of
 // whether `App::ui()` is currently running.
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 struct SharedTimer {
     mode: Mode,
     focus_min: u32,
@@ -94,7 +94,7 @@ struct SharedTimer {
     dirty: bool,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 impl SharedTimer {
     fn new(settings: &Settings, sessions: Vec<Session>, mode: Mode, total_seconds: u32) -> Self {
         Self {
@@ -125,10 +125,10 @@ impl SharedTimer {
         }
     }
 
-    fn apply_command(&mut self, cmd: crate::platform::MacMenuCommand) {
-        use crate::platform::MacMenuCommand;
+    fn apply_command(&mut self, cmd: crate::status_bar::MenuCommand) {
+        use crate::status_bar::MenuCommand;
         match cmd {
-            MacMenuCommand::TogglePause => {
+            MenuCommand::TogglePause => {
                 if self.running {
                     self.seconds_left = self.current_seconds();
                     self.running = false;
@@ -138,19 +138,19 @@ impl SharedTimer {
                     self.tick_started_at = Some(Instant::now());
                 }
             }
-            MacMenuCommand::Reset => {
+            MenuCommand::Reset => {
                 self.running = false;
                 self.tick_started_at = None;
                 self.seconds_left = self.total_seconds;
             }
-            MacMenuCommand::StartNewFocus => {
+            MenuCommand::StartNewFocus => {
                 self.mode = Mode::Focus;
                 self.total_seconds = self.focus_min * 60;
                 self.seconds_left = self.total_seconds;
                 self.running = true;
                 self.tick_started_at = Some(Instant::now());
             }
-            MacMenuCommand::SetFocusDuration(min) => {
+            MenuCommand::SetFocusDuration(min) => {
                 self.focus_min = min;
                 if !self.running && self.mode == Mode::Focus {
                     self.total_seconds = min * 60;
@@ -229,17 +229,17 @@ impl eframe::App for PomodoroApp {
 
         if self.first_frame {
             self.first_frame = false;
-            #[cfg(target_os = "macos")]
-            crate::platform::setup_macos_status_bar();
-            #[cfg(target_os = "macos")]
-            crate::platform::setup_macos_status_menu(self.settings.focus_min);
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            crate::status_bar::setup(self.settings.focus_min);
 
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             {
                 let shared = std::sync::Arc::clone(&self.shared_timer);
                 let ctx_bg = ctx.clone();
+                #[cfg(target_os = "macos")]
                 let needs_reset = std::sync::Arc::clone(&self.needs_pointer_reset);
                 std::thread::spawn(move || {
+                    #[cfg(target_os = "macos")]
                     let mut was_mini = false;
                     loop {
                         std::thread::sleep(std::time::Duration::from_millis(300));
@@ -249,8 +249,8 @@ impl eframe::App for PomodoroApp {
                         // minimized/occluded, since App::ui() doesn't run then.
                         if let Ok(mut s) = shared.lock() {
                             let mut needs_persist = false;
-                            for cmd in crate::platform::poll_macos_menu_commands() {
-                                if matches!(cmd, crate::platform::MacMenuCommand::SetFocusDuration(_)) {
+                            for cmd in crate::status_bar::poll_commands() {
+                                if matches!(cmd, crate::status_bar::MenuCommand::SetFocusDuration(_)) {
                                     needs_persist = true;
                                 }
                                 s.apply_command(cmd);
@@ -265,33 +265,36 @@ impl eframe::App for PomodoroApp {
                             let current = s.current_seconds();
                             let mins = current / 60;
                             let indicator = if s.running { " ▶" } else { "" };
-                            crate::platform::update_macos_status_bar(
+                            crate::status_bar::update_text(
                                 &format!("{} {} min{}", s.mode.emoji(), mins, indicator)
                             );
-                            crate::platform::refresh_macos_menu(s.running, s.focus_min);
+                            crate::status_bar::refresh_menu(s.running, s.focus_min);
                         }
 
-                        // ── Restore detection ─────────────────────────────────
-                        // egui-winit never updates viewport_info.minimized at
-                        // runtime on macOS (deadlock prevention). After a Dock
-                        // restore only Occluded(false) fires, leaving
-                        // info.minimized = Some(true) permanently, which keeps
-                        // is_visible = false so ui() never runs again.
-                        // Sending Minimized(false) resets that flag; Focus then
-                        // calls activateIgnoringOtherApps + makeKeyAndOrderFront.
-                        let is_mini = crate::platform::window_is_minimized();
-                        if was_mini && !is_mini {
-                            ctx_bg.send_viewport_cmd_to(
-                                egui::ViewportId::ROOT,
-                                egui::ViewportCommand::Minimized(false),
-                            );
-                            ctx_bg.send_viewport_cmd_to(
-                                egui::ViewportId::ROOT,
-                                egui::ViewportCommand::Focus,
-                            );
-                            needs_reset.store(true, std::sync::atomic::Ordering::Relaxed);
+                        #[cfg(target_os = "macos")]
+                        {
+                            // ── Restore detection (macOS only) ────────────────────
+                            // egui-winit never updates viewport_info.minimized at
+                            // runtime on macOS (deadlock prevention). After a Dock
+                            // restore only Occluded(false) fires, leaving
+                            // info.minimized = Some(true) permanently, which keeps
+                            // is_visible = false so ui() never runs again.
+                            // Sending Minimized(false) resets that flag; Focus then
+                            // calls activateIgnoringOtherApps + makeKeyAndOrderFront.
+                            let is_mini = crate::platform::window_is_minimized();
+                            if was_mini && !is_mini {
+                                ctx_bg.send_viewport_cmd_to(
+                                    egui::ViewportId::ROOT,
+                                    egui::ViewportCommand::Minimized(false),
+                                );
+                                ctx_bg.send_viewport_cmd_to(
+                                    egui::ViewportId::ROOT,
+                                    egui::ViewportCommand::Focus,
+                                );
+                                needs_reset.store(true, std::sync::atomic::Ordering::Relaxed);
+                            }
+                            was_mini = is_mini;
                         }
-                        was_mini = is_mini;
 
                         ctx_bg.request_repaint();
                     }
@@ -302,7 +305,7 @@ impl eframe::App for PomodoroApp {
         // Adopt any state the background thread applied (menu-bar commands or
         // a natural session completion) while the window was minimized/occluded
         // and this frame's `ui()` wasn't running to handle them itself.
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             let mut adopted = false;
             if let Ok(mut shared) = self.shared_timer.lock() {
@@ -337,14 +340,14 @@ impl eframe::App for PomodoroApp {
         // Push fresh state to the background thread and update the status
         // bar text immediately, for instant feedback while the window is
         // visible (the background thread also does this every ~300ms).
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             let mins = self.seconds_left / 60;
             let indicator = if self.running { " ▶" } else { "" };
-            crate::platform::update_macos_status_bar(
+            crate::status_bar::update_text(
                 &format!("{} {} min{}", self.mode.emoji(), mins, indicator)
             );
-            crate::platform::refresh_macos_menu(self.running, self.settings.focus_min);
+            crate::status_bar::refresh_menu(self.running, self.settings.focus_min);
             if let Ok(mut shared) = self.shared_timer.lock() {
                 shared.mode = self.mode;
                 shared.focus_min = self.settings.focus_min;

@@ -14,10 +14,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install GUI + wmctrl dependencies
+      - name: Install GUI, tray + wmctrl dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb1-dev wmctrl
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb1-dev libgtk-3-dev libayatana-appindicator3-dev wmctrl
 
       - uses: Swatinem/rust-cache@v2
 

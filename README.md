@@ -40,8 +40,21 @@ For a proper app bundle you can launch from Launchpad/Spotlight instead of the
 raw binary, run `./install.sh` — it builds the release binary and installs a
 `Pomodoro.app` bundle to `~/Applications`.
 
-The menu bar shows a 🍅 status item while the app is running — this is a
-macOS-only feature (there's no equivalent tray icon on Linux/X11 yet).
+The menu bar shows a 🍅 status item while the app is running, with a
+dropdown to start/pause, reset, start a new focus session, or pick a focus
+duration — it keeps working while the window is minimized.
+
+## Top bar indicator on Linux
+
+On Linux the same 🍅 indicator and dropdown appear in the top bar via
+AppIndicator, on both X11 and Wayland. The text label ("🍅 24 min ▶") is shown
+by Ubuntu's built-in AppIndicator extension and by KDE; other hosts may show
+only the icon. On GNOME outside Ubuntu (e.g. Fedora) install the
+[AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/)
+to see it at all.
+
+The runtime library (`libayatana-appindicator3-1`) ships with Ubuntu Desktop.
+If it's missing, the app still runs — just without the indicator.
 
 ## Why the icon may not show up at first
 
@@ -116,18 +129,21 @@ directory.
 ## Dependencies
 
 Pure-Rust GUI via `egui`/`eframe`. On Linux you need standard X11 or Wayland
-libraries — already present on any desktop. Headless servers won't work (no
+libraries — already present on any desktop — plus GTK 3 and
+libayatana-appindicator development headers for the top bar indicator. Headless servers won't work (no
 display). On macOS the Xcode Command Line Tools are the only requirement — no
 extra system libs.
 
-If `cargo build` complains about missing system libs, install:
+On Linux, install these before `cargo build`:
 
 ```bash
 # Debian/Ubuntu
-sudo apt install libxkbcommon-dev libwayland-dev libxcb1-dev
+sudo apt install libxkbcommon-dev libwayland-dev libxcb1-dev \
+  libgtk-3-dev libayatana-appindicator3-dev
 
 # Fedora
-sudo dnf install libxkbcommon-devel wayland-devel libxcb-devel
+sudo dnf install libxkbcommon-devel wayland-devel libxcb-devel \
+  gtk3-devel libayatana-appindicator-gtk3-devel
 ```
 
 **Always-on-top on Linux X11** additionally requires the `wmctrl` binary on

@@ -15,6 +15,13 @@ dirs = "5"
 muda = { version = "0.20.0", default-features = false }
 objc = "0.2"
 
+# Top bar indicator. Build deps: libgtk-3-dev, libayatana-appindicator3-dev.
+# libxdo is left out (only needed for muda accelerators, which we don't use).
+[target.'cfg(target_os = "linux")'.dependencies]
+muda = { version = "0.20.0", default-features = false, features = ["gtk3"] }
+tray-icon = { version = "0.25", default-features = false, features = ["libappindicator"] }
+gtk = "0.18"
+
 [profile.release]
 opt-level = 3
 lto = true
