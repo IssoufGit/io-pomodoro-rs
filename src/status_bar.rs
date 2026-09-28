@@ -1,4 +1,5 @@
-// Menu bar / top bar indicator: "🍅 24 min ▶" plus a dropdown menu.
+// Menu bar / top bar indicator: hourglass icon + "24 min ▶", plus a dropdown
+// menu.
 //
 //   macOS — NSStatusItem in the menu bar, dropdown built with muda.
 //   Linux — AppIndicator (libayatana-appindicator via tray-icon). The label
@@ -104,12 +105,25 @@ mod macos {
     /// Main-thread only, like `STATUS_ITEM`.
     static mut MENU: Option<MenuHandles> = None;
 
+    const NS_IMAGE_LEFT: usize = 2;
+
+    #[repr(C)]
+    struct NSSize {
+        width: f64,
+        height: f64,
+    }
+
+    unsafe impl objc::Encode for NSSize {
+        fn encode() -> objc::Encoding {
+            unsafe { objc::Encoding::from_str("{CGSize=dd}") }
+        }
+    }
+
     /// Creates the menu bar item and attaches the dropdown menu. Call once on
     /// first frame.
     pub fn setup(focus_min: u32) {
         use muda::ContextMenu;
         use objc::{class, msg_send, sel, sel_impl, runtime::Object};
-        use std::ffi::CString;
         unsafe {
             let bar: *mut Object = msg_send![class!(NSStatusBar), systemStatusBar];
             let item: *mut Object = msg_send![bar, statusItemWithLength: -1.0f64];
@@ -117,9 +131,22 @@ mod macos {
             STATUS_ITEM = item;
             let btn: *mut Object = msg_send![item, button];
             if !btn.is_null() {
-                let s = CString::new("🍅").unwrap();
-                let ns: *mut Object = msg_send![class!(NSString), stringWithUTF8String: s.as_ptr()];
-                let _: () = msg_send![btn, setTitle: ns];
+                // Same hourglass as the Dock icon, sized like other menu bar
+                // items, to the left of the "24 min ▶" title.
+                let bytes = crate::icon::ICON_PNG;
+                let data: *mut Object = msg_send![
+                    class!(NSData),
+                    dataWithBytes: bytes.as_ptr()
+                    length: bytes.len()
+                ];
+                let img: *mut Object = msg_send![class!(NSImage), alloc];
+                let img: *mut Object = msg_send![img, initWithData: data];
+                if !img.is_null() {
+                    let _: () = msg_send![img, setSize: NSSize { width: 18.0, height: 18.0 }];
+                    let _: () = msg_send![btn, setImage: img];
+                    let _: () = msg_send![btn, setImagePosition: NS_IMAGE_LEFT];
+                    let _: () = msg_send![img, release];
+                }
             }
 
             let handles = super::build_menu(focus_min);
@@ -198,7 +225,7 @@ mod linux {
                     .with_icon(icon)
                     .with_tooltip("Pomodoro")
                     // On Linux the title is the text label next to the icon.
-                    .with_title("🍅")
+                    .with_title("")
                     .build()
                 {
                     Ok(tray) => tray,

@@ -40,14 +40,14 @@ For a proper app bundle you can launch from Launchpad/Spotlight instead of the
 raw binary, run `./install.sh` — it builds the release binary and installs a
 `Pomodoro.app` bundle to `~/Applications`.
 
-The menu bar shows a 🍅 status item while the app is running, with a
+The menu bar shows an hourglass status item while the app is running, with a
 dropdown to start/pause, reset, start a new focus session, or pick a focus
 duration — it keeps working while the window is minimized.
 
 ## Top bar indicator on Linux
 
-On Linux the same 🍅 indicator and dropdown appear in the top bar via
-AppIndicator, on both X11 and Wayland. The text label ("🍅 24 min ▶") is shown
+On Linux the same hourglass indicator and dropdown appear in the top bar via
+AppIndicator, on both X11 and Wayland. The text label ("24 min ▶") is shown
 by Ubuntu's built-in AppIndicator extension and by KDE; other hosts may show
 only the icon. On GNOME outside Ubuntu (e.g. Fedora) install the
 [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/)
@@ -158,3 +158,9 @@ If `wmctrl` isn't installed, the pin button is simply disabled with a tooltip
 explaining how to enable it — nothing breaks. Not required on Wayland
 (always-on-top is unsupported there by design, same button/tooltip pattern) or
 on macOS (handled natively via `NSWindow` levels).
+
+## Credits
+
+The hourglass icon (`assets/pomodoro.png`) is the ⏳ emoji from Google's
+[Noto Emoji](https://github.com/googlefonts/noto-emoji); see
+`assets/NOTO-EMOJI-LICENSE`.

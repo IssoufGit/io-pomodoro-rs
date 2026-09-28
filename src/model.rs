@@ -37,14 +37,6 @@ impl Mode {
         }
     }
 
-    pub fn emoji(&self) -> &'static str {
-        match self {
-            Mode::Focus => "🍅",
-            Mode::ShortBreak => "☕",
-            Mode::LongBreak => "🌙",
-        }
-    }
-
     pub fn color(&self) -> egui::Color32 {
         match self {
             Mode::Focus => egui::Color32::from_rgb(196, 69, 54),

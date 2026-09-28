@@ -266,7 +266,7 @@ impl eframe::App for PomodoroApp {
                             let mins = current / 60;
                             let indicator = if s.running { " ▶" } else { "" };
                             crate::status_bar::update_text(
-                                &format!("{} {} min{}", s.mode.emoji(), mins, indicator)
+                                &format!("{} min{}", mins, indicator)
                             );
                             crate::status_bar::refresh_menu(s.running, s.focus_min);
                         }
@@ -345,7 +345,7 @@ impl eframe::App for PomodoroApp {
             let mins = self.seconds_left / 60;
             let indicator = if self.running { " ▶" } else { "" };
             crate::status_bar::update_text(
-                &format!("{} {} min{}", self.mode.emoji(), mins, indicator)
+                &format!("{} min{}", mins, indicator)
             );
             crate::status_bar::refresh_menu(self.running, self.settings.focus_min);
             if let Ok(mut shared) = self.shared_timer.lock() {
