@@ -150,6 +150,8 @@ impl SharedTimer {
                 self.running = true;
                 self.tick_started_at = Some(Instant::now());
             }
+            // Handled by the background loop before it gets here.
+            MenuCommand::Quit => return,
             MenuCommand::SetFocusDuration(min) => {
                 self.focus_min = min;
                 if !self.running && self.mode == Mode::Focus {
@@ -250,6 +252,13 @@ impl eframe::App for PomodoroApp {
                         if let Ok(mut s) = shared.lock() {
                             let mut needs_persist = false;
                             for cmd in crate::status_bar::poll_commands() {
+                                // Exit straight from here: while the window is
+                                // minimized eframe runs no frames, so a queued
+                                // ViewportCommand::Close might never be handled.
+                                if matches!(cmd, crate::status_bar::MenuCommand::Quit) {
+                                    let _ = crate::persistence::save_state(&s.persisted_state());
+                                    std::process::exit(0);
+                                }
                                 if matches!(cmd, crate::status_bar::MenuCommand::SetFocusDuration(_)) {
                                     needs_persist = true;
                                 }

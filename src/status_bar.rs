@@ -16,6 +16,7 @@ pub enum MenuCommand {
     Reset,
     StartNewFocus,
     SetFocusDuration(u32),
+    Quit,
 }
 
 /// Handles to the menu items whose text/checked-state change at runtime.
@@ -44,6 +45,9 @@ fn build_menu(focus_min: u32) -> MenuHandles {
     let toggle_pause = MenuItem::with_id("toggle_pause", "Start", true, None);
     let reset = MenuItem::with_id("reset", "Reset", true, None);
     let start_new_focus = MenuItem::with_id("start_new_focus", "Start New Focus", true, None);
+    // Not PredefinedMenuItem::quit: on Linux that only stops the tray
+    // thread's GTK loop, not the app.
+    let quit = MenuItem::with_id("quit", "Quit", true, None);
 
     let duration_submenu = Submenu::new("Focus Duration", true);
     let mut duration_items = Vec::new();
@@ -65,6 +69,8 @@ fn build_menu(focus_min: u32) -> MenuHandles {
     let _ = menu.append(&start_new_focus);
     let _ = menu.append(&PredefinedMenuItem::separator());
     let _ = menu.append(&duration_submenu);
+    let _ = menu.append(&PredefinedMenuItem::separator());
+    let _ = menu.append(&quit);
 
     MenuHandles { menu, toggle_pause, duration_items }
 }
@@ -81,6 +87,8 @@ pub fn poll_commands() -> Vec<MenuCommand> {
             commands.push(MenuCommand::Reset);
         } else if id == "start_new_focus" {
             commands.push(MenuCommand::StartNewFocus);
+        } else if id == "quit" {
+            commands.push(MenuCommand::Quit);
         } else if let Some(min) = id.strip_prefix("duration_").and_then(|s| s.parse::<u32>().ok()) {
             commands.push(MenuCommand::SetFocusDuration(min));
         }

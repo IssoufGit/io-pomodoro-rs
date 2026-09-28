@@ -41,8 +41,8 @@ raw binary, run `./install.sh` — it builds the release binary and installs a
 `Pomodoro.app` bundle to `~/Applications`.
 
 The menu bar shows an hourglass status item while the app is running, with a
-dropdown to start/pause, reset, start a new focus session, or pick a focus
-duration — it keeps working while the window is minimized.
+dropdown to start/pause, reset, start a new focus session, pick a focus
+duration, or quit — it keeps working while the window is minimized.
 
 ## Top bar indicator on Linux
 
