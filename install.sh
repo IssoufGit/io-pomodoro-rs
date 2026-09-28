@@ -110,6 +110,24 @@ install_linux() {
   echo "Installing icon to $ICON_DIR/pomodoro.png"
   install -m 0644 assets/pomodoro.png "$ICON_DIR/pomodoro.png"
 
+  HICOLOR_DIR="$HOME/.local/share/icons/hicolor"
+  INDEX_THEME="$HICOLOR_DIR/index.theme"
+  if [[ ! -f "$INDEX_THEME" ]]; then
+    echo "Writing $INDEX_THEME"
+    cat > "$INDEX_THEME" << 'THEME'
+[Icon Theme]
+Name=Hicolor
+Comment=Fallback icon theme
+Hidden=true
+Directories=256x256/apps
+
+[256x256/apps]
+Size=256
+Context=Applications
+Type=Fixed
+THEME
+  fi
+
   DESKTOP_SRC="assets/pomodoro.desktop.in"
   DESKTOP_DST="$APPS_DIR/pomodoro.desktop"
 
@@ -131,7 +149,8 @@ install_linux() {
     update-desktop-database "$APPS_DIR" || true
   fi
   if command -v gtk-update-icon-cache >/dev/null; then
-    gtk-update-icon-cache -f "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
+    gtk-update-icon-cache -f "$HICOLOR_DIR" || \
+      echo "Warning: gtk-update-icon-cache failed." >&2
   fi
 
   echo
